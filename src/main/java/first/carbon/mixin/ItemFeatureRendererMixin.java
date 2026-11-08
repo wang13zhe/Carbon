@@ -14,13 +14,9 @@ import java.util.List;
 
 @Mixin(ItemFeatureRenderer.class)
 public abstract class ItemFeatureRendererMixin {
-    @Inject(method = "buildGroup", at = @At("HEAD"))
-    private void carbon$begin(FeatureFrameContext context, List<ItemFeatureRenderer.Submit> submits, CallbackInfo ci) {
-        Carbon.GENERIC.begin();
-    }
-
     @ModifyVariable(method = "buildGroup", at = @At("HEAD"), argsOnly = true)
     private List<ItemFeatureRenderer.Submit> carbon$filter(List<ItemFeatureRenderer.Submit> submits) {
+        Carbon.GENERIC.begin();
         List<ItemFeatureRenderer.Submit> remaining = null;
         for (int i = 0; i < submits.size(); i++) {
             if (!Carbon.GENERIC.submit(submits.get(i))) {

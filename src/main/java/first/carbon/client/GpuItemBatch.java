@@ -92,7 +92,7 @@ final class GpuItemBatch implements AutoCloseable {
                 foil |= args[7] == ItemStackRenderState.FoilType.STANDARD;
                 PoseStack.Pose pose = ((PoseStack) args[0]).last();
                 int[] tints = (int[]) args[5];
-                for (BakedQuad quad : (List<BakedQuad>) args[6]) {
+                for (BakedQuad quad : ((net.minecraft.client.resources.model.geometry.ItemQuads) args[6]).all()) {
                     var material = quad.materialInfo();
                     if (!sprites.contains(material.sprite())) sprites.add(material.sprite());
                     if (material.itemRenderType().hasBlending()) throw new IllegalArgumentException("Translucent material");
@@ -284,6 +284,8 @@ final class GpuItemBatch implements AutoCloseable {
         final boolean cull;
         final net.minecraft.client.renderer.rendertype.RenderType type;
         final net.minecraft.client.renderer.rendertype.RenderType glintType;
+        final net.minecraft.client.renderer.rendertype.PreparedRenderType prepared;
+        final net.minecraft.client.renderer.rendertype.PreparedRenderType preparedGlint;
         final VertexFormat format;
         final GpuBuffer vertices;
         final int vao;
@@ -297,6 +299,8 @@ final class GpuItemBatch implements AutoCloseable {
             this.cull = cull;
             this.type = type;
             this.glintType = glintType;
+            this.prepared = type.prepare();
+            this.preparedGlint = glintType == null ? null : glintType.prepare();
             this.format = format;
             vao = glGenVertexArrays();
             this.vertices = RenderSystem.getDevice().createBuffer(() -> "Carbon item mesh", GpuBuffer.USAGE_VERTEX, vertices);

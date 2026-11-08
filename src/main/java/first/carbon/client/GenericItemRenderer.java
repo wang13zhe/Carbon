@@ -105,9 +105,9 @@ public final class GenericItemRenderer {
                     Carbon.SODIUM.mark(batch.sprites);
                     batch.upload();
                     for (int pass = 0; pass < (batch.foil ? 2 : 1); pass++) for (var mesh : batch.meshes) {
-                        var type = pass == 0 ? mesh.type : mesh.glintType;
+                        var type = pass == 0 || mesh.glintType == null ? mesh.type : mesh.glintType;
                         if (pass == 0 || !Carbon.IRIS.shadowPass()) {
-                            Carbon.IRIS.draw(type, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
+                            Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
                                     batch.count, batch.instanceBuffer, 0, zero, 0, 0, batch.center, batch.halfSize);
                             drawCalls++; totalDraws++;
                         }

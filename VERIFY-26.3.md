@@ -139,3 +139,37 @@ git checkout 6f01ef4   # Fabric 移植基线（26.1.2 可编译）
 ```
 
 或将 `gradle.properties` 的 `minecraft_version` 改回 `26.1.2` 重新构建。
+
+---
+
+## 九、编译通过后的代码审查修复记录
+
+编译通过不等于运行正确。以下是在打包前逐条核对 MC 26.3 官方字节码后修正的问题：
+
+| # | 位置 | 问题 | 后果 |
+|---|---|---|---|
+| 1 | `GpuItemBatch` proxy handler | `submitItem` 第 7 参数已改为 `ItemQuads`，代码仍强转 `List<BakedQuad>` | 运行期 `ClassCastException`，物品实例化完全失效 |
+| 2 | `ItemFeatureRendererMixin` | `begin()` 用 `@Inject(HEAD)`，过滤用 `@ModifyVariable(HEAD)`，两者执行顺序不确定 | `active` 未初始化，所有提交被拒，优化静默失效 |
+| 3 | `GenericItemRenderer` / `ItemBatchRenderer` | `mesh.glintType` 可能为 null 却直接用于绘制 | 附魔物品 `NullPointerException` |
+| 4 | `ItemBatchRenderer` | `shouldRender` 新增的 float 参数硬编码 `1.0f` | 剔除框按整 tick 计算，快速移动时提前剔除 |
+| 5 | `ItemBatchRenderer` | `sceneFoilTick` 替换后与 `sceneTick` 恒等，判断冗余 | 语义混淆，留下死字段 |
+| 6 | `IrisCompatibility.draw` | `drawIndexed` 参数顺序错误：写成 `(0, 0, indices, 1, 0)` | **indexCount 传 0，Iris 路径完全不绘制**（最严重） |
+| 7 | `IrisCompatibility.draw` | 每帧每 mesh 调 `type.prepare()`，内部解析全部纹理 | 每帧重复解析，掉帧 |
+
+修复后的 `drawIndexed` 调用（与 MC 官方 `PreparedRenderType.drawFromBuffer` 一致）：
+
+```java
+pass.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, 0);
+```
+
+同时把 `PreparedRenderType` 缓存在 `Mesh` 构造期，绘制时复用。
+
+### 仍需实测确认的点
+
+以下无法靠静态分析确定，必须游戏内验证：
+
+1. `@ModifyVariable` 对 `buildGroup` 的 `List` 参数改写是否被 Mixin 正确应用
+2. 过滤后原版是否还会重复绘制被接管的物品（应不重复）
+3. 阴影 `radius() == 0.15f` 判断在 26.3 是否仍成立
+4. Iris 路径的实际画面是否正确
+5. 附魔光效是否持续动画（26.3 由 `Util.getMillis()` 驱动）

@@ -182,7 +182,11 @@ public final class IrisCompatibility {
 
     public void draw(RenderType type, GpuBuffer vertices, int vertexBuffer, int indexBuffer, VertexFormat format, int indices,
                      int instances, int instanceBuffer, int mode, Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) {
-        var prepared = type.prepare();
+        draw(type, type.prepare(), vertices, vertexBuffer, indexBuffer, format, indices, instances, instanceBuffer, mode, camera, clock, scale, center, halfSize);
+    }
+
+    public void draw(RenderType type, net.minecraft.client.renderer.rendertype.PreparedRenderType prepared, GpuBuffer vertices, int vertexBuffer, int indexBuffer, VertexFormat format, int indices,
+                     int instances, int instanceBuffer, int mode, Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) {
         var transforms = prepared.dynamicTransforms();
         var autoIndices = RenderSystem.getSequentialBuffer(type.primitiveTopology());
         var elements = autoIndices.getBuffer(indices);
@@ -191,12 +195,12 @@ public final class IrisCompatibility {
             pass.setPipeline(RenderSystem.getCompiledPipeline(prepared.pipeline()));
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transforms);
-            pass.setVertexBuffer(0, vertices.slice());
-            pass.setIndexBuffer(elements, autoIndices.type());
             var scissor = prepared.scissorState();
             if (scissor.enabled()) pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height());
+            pass.setVertexBuffer(0, vertices.slice());
             for (var texture : prepared.textures()) pass.setUniform(texture.name(), texture.textureView(), texture.sampler());
-            pass.drawIndexed(0, 0, indices, 1, 0);
+            pass.setIndexBuffer(elements, autoIndices.type());
+            pass.drawIndexed(indices, 1, 0, 0, 0);
         } finally { current = null; }
     }
 

@@ -49,7 +49,6 @@ public final class ItemBatchRenderer {
     private boolean updating, updateStationary, updateTickStable, sceneTickStable;
     private int updateIndex, updateInstances, updateCollected;
     private double updateDistanceMargin;
-    private long sceneFoilTick;
     private final Matrix4f transform = new Matrix4f();
     private ClientLevel level;
     private Vec3 camera = Vec3.ZERO, sceneCamera = Vec3.ZERO;
@@ -138,7 +137,7 @@ public final class ItemBatchRenderer {
         reused = active && dedicated && skip == sceneSkip && sceneValid && stationary && !sceneDirty && !blockCacheDirty
                 && (skip || position.equals(sceneCamera) && visibilityMatrix.equals(sceneMatrix))
                 && level.getSkyDarken() == sceneSkyDarken && minecraft.getCameraEntity() == sceneCameraEntity
-                && (sceneTickStable || level.getGameTime() == sceneTick && minecraft.level.getGameTime() == sceneFoilTick)
+                && (sceneTickStable || level.getGameTime() == sceneTick)
                 && level.getGameTime() / 24000 == sceneTick / 24000
                 && sceneEntityCount == level.getEntityCount() && Entity.getViewScale() == sceneViewScale
                 && minecraft.options.getEffectiveRenderDistance() == sceneRenderDistance
@@ -208,7 +207,6 @@ public final class ItemBatchRenderer {
             sceneEntityDistance = minecraft.options.entityDistanceScaling().get();
             sceneSkyDarken = level.getSkyDarken();
             sceneTick = level.getGameTime();
-            sceneFoilTick = minecraft.level.getGameTime();
             sceneEntityCount = level.getEntityCount();
             sceneShadows = renderShadows;
             sceneSkip = skip;
@@ -243,7 +241,7 @@ public final class ItemBatchRenderer {
                     updateDistanceMargin = Math.min(updateDistanceMargin, Math.abs(size * 64 * Entity.getViewScale() - item.position().distanceTo(camera)));
                 }
                 if (skip ? !item.shouldRender(camera.x, camera.y, camera.z)
-                        : !dispatcher.shouldRender(item, frustum, camera.x, camera.y, camera.z, 1.0f)) continue;
+                        : !dispatcher.shouldRender(item, frustum, camera.x, camera.y, camera.z, partialTick)) continue;
                 ItemStack stack = item.getItem();
                 EntityCache cache = ((EntityCacheAccess) item).imo$cache();
                 if (cache.generation != generation || (cache.stack != stack || cache.version != ((ComponentVersion) stack.getComponents()).imo$version() || cache.dynamicFoil && cache.foil != ((FoilState) (Object) stack).imo$foil((int) minecraft.level.getGameTime())) || cache.batch != null && cache.batch.closed) {
@@ -372,8 +370,8 @@ public final class ItemBatchRenderer {
                 Carbon.SODIUM.mark(batch.sprites);
                 uploadedBytes += batch.upload();
                 for (int pass = 0; pass < (batch.foil && !shadow ? 2 : 1); pass++) for (var mesh : batch.meshes) {
-                    var type = pass == 0 ? mesh.type : mesh.glintType;
-                    Carbon.IRIS.draw(type, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
+                    var type = pass == 0 || mesh.glintType == null ? mesh.type : mesh.glintType;
+                    Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
                             batch.count, batch.instanceBuffer, batch.physics ? 4 : 3, offset, clock, batch.groundScaleY, batch.center, batch.halfSize);
                     if (!shadow) drawCalls++;
                 }

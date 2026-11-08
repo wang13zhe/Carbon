@@ -20,3 +20,4 @@ _stage_*.sh
 _sigs*.sh
 _patch/
 _api_*.log
+_push2.sh
