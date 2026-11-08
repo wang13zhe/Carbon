@@ -22,3 +22,7 @@ _patch/
 _api_*.log
 _push2.sh
 _push*.sh
+_p.sh
+_opt.txt
+_ch*.out
+_gen*.out

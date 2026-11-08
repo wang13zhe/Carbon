@@ -6,8 +6,8 @@ import first.carbon.Carbon;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.client.renderer.extract.LevelExtractor;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(LevelRenderer.class)
+@Mixin(LevelExtractor.class)
 public abstract class LevelRendererMixin {
     @Inject(method = "extractVisibleEntities", at = @At("HEAD"))
     private void imo$frame(Camera camera, Frustum frustum, DeltaTracker delta, LevelRenderState state, CallbackInfo ci) {
@@ -23,7 +23,7 @@ public abstract class LevelRendererMixin {
     }
 
     @Inject(method = "extractVisibleEntities", at = @At("RETURN"))
-    private void imo$flush(LevelRenderState state, CallbackInfo ci) {
+    private void imo$flush(Camera camera, Frustum frustum, DeltaTracker delta, LevelRenderState state, CallbackInfo ci) {
         Carbon.RENDERER.flush(state.cameraRenderState);
     }
 

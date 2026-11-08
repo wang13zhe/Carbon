@@ -44,7 +44,8 @@ public final class GenericItemRenderer {
                 && Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTexture() instanceof com.mojang.renderpearl.backend.opengl.GlTexture
                 && GL.getCapabilities().OpenGL33 && RenderSystem.getProjectionMatrixBuffer() != null && RenderSystem.getShaderFog() != null;
         if (active && Carbon.IRIS.active()) Carbon.RENDERER.drawIrisShadows();
-        frame = (int) Minecraft.getInstance().level.getGameTime();
+        var level = Minecraft.getInstance().level;
+        frame = level == null ? 0 : (int) level.getGameTime();
         instances = drawCalls = 0;
         if (active && !Carbon.IRIS.active() && program == 0) {
             try {
