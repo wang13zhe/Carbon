@@ -371,7 +371,7 @@ public final class ItemBatchRenderer {
                 uploadedBytes += batch.upload();
                 for (int pass = 0; pass < (batch.foil && !shadow ? 2 : 1); pass++) for (var mesh : batch.meshes) {
                     var type = pass == 0 || mesh.glintType == null ? mesh.type : mesh.glintType;
-                    Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
+                    Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, pass == 0 || mesh.compiledGlint == null ? mesh.compiled : mesh.compiledGlint, mesh.vertexSlice, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
                             batch.count, batch.instanceBuffer, batch.physics ? 4 : 3, offset, clock, batch.groundScaleY, batch.center, batch.halfSize);
                     if (!shadow) drawCalls++;
                 }

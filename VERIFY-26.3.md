@@ -173,3 +173,25 @@ pass.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, 0);
 3. 阴影 `radius() == 0.15f` 判断在 26.3 是否仍成立
 4. Iris 路径的实际画面是否正确
 5. 附魔光效是否持续动画（26.3 由 `Util.getMillis()` 驱动）
+
+---
+
+## 十、性能优化记录
+
+在保证功能正确的前提下，消除了每帧重复的对象解析与 GL 查询：
+
+| 优化项 | 原实现 | 现实现 | 收益 |
+|---|---|---|---|
+| `PreparedRenderType` | 每帧每 mesh 调 `type.prepare()`，内部解析全部纹理 | Mesh 构造时解析一次并缓存 | 消除每帧 N×M 次纹理查找 |
+| `CompiledRenderPipeline` | 每帧每 mesh 调 `getCompiledPipeline()` | Mesh 构造时获取并缓存 | 消除每帧 map 查找与潜在编译 |
+| `GpuBufferSlice` | 每帧调 `vertices.slice()` 新建 | Mesh 构造时创建一次 | 减少每帧对象分配 |
+| uniform 位置 | 每帧调 `glGetUniformLocation` 共 8 次（物品）+ 2 次（阴影） | 程序创建时查询一次并缓存 | 消除每帧 10 次 GL 字符串查找 |
+
+优化后 `gradle build` 仍为 BUILD SUCCESSFUL，产物 `carbon-26.3-fabric-0.1.jar`（167 KB）。
+
+### 后续可继续优化的方向（需实测数据支撑）
+
+1. **批次合并粒度**：当前按 `Material`（纹理+剔除+glint）分组，若同类物品材质分散会产生较多 draw call
+2. **实例缓冲更新策略**：`batch.upload()` 的上传时机可进一步批量化
+3. **缓存失效频率**：`sceneDirty` 的触发条件可用实测调整，减少重建
+4. **500 帧后的度量**：建议先用 `/carbon stats` 采集真实数据，再决定优化重点

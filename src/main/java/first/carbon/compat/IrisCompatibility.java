@@ -187,17 +187,22 @@ public final class IrisCompatibility {
 
     public void draw(RenderType type, net.minecraft.client.renderer.rendertype.PreparedRenderType prepared, GpuBuffer vertices, int vertexBuffer, int indexBuffer, VertexFormat format, int indices,
                      int instances, int instanceBuffer, int mode, Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) {
+        draw(type, prepared, com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(prepared.pipeline()), null, vertices, vertexBuffer, indexBuffer, format, indices, instances, instanceBuffer, mode, camera, clock, scale, center, halfSize);
+    }
+
+    public void draw(RenderType type, net.minecraft.client.renderer.rendertype.PreparedRenderType prepared, com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline compiled, com.mojang.renderpearl.api.buffers.GpuBufferSlice vertexSlice, GpuBuffer vertices, int vertexBuffer, int indexBuffer, VertexFormat format, int indices,
+                     int instances, int instanceBuffer, int mode, Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) {
         var transforms = prepared.dynamicTransforms();
         var autoIndices = RenderSystem.getSequentialBuffer(type.primitiveTopology());
         var elements = autoIndices.getBuffer(indices);
         current = new Draw(vertexBuffer, indexBuffer, format, indices, instances, instanceBuffer, mode, camera, clock, scale, center, halfSize);
         try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Carbon Iris items", Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTextureView(), Optional.<org.joml.Vector4fc>empty(), Minecraft.getInstance().gameRenderer.mainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
-            pass.setPipeline(RenderSystem.getCompiledPipeline(prepared.pipeline()));
+            pass.setPipeline(compiled);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transforms);
             var scissor = prepared.scissorState();
             if (scissor.enabled()) pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height());
-            pass.setVertexBuffer(0, vertices.slice());
+            pass.setVertexBuffer(0, vertexSlice != null ? vertexSlice : vertices.slice());
             for (var texture : prepared.textures()) pass.setUniform(texture.name(), texture.textureView(), texture.sampler());
             pass.setIndexBuffer(elements, autoIndices.type());
             pass.drawIndexed(indices, 1, 0, 0, 0);

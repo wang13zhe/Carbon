@@ -17,6 +17,7 @@ public final class GenericShadowRenderer {
     private final List<net.minecraft.client.renderer.feature.ShadowFeatureRenderer.Submit> remaining = new ArrayList<>();
     private ByteBuffer data, previous;
     private int count, capacity, uploadedCount, gpuCapacity, program, vao, buffer, framebuffer;
+    private int uView = -1, uSampler0 = -1;
     private boolean failed;
     public long totalInstances;
 
@@ -31,6 +32,8 @@ public final class GenericShadowRenderer {
                 program = Carbon.RENDERER.createProgram("generic_shadow.vsh", "generic_shadow.fsh");
                 glUniformBlockBinding(program, glGetUniformBlockIndex(program, "Projection"), 4);
                 glUniformBlockBinding(program, glGetUniformBlockIndex(program, "Fog"), 5);
+                uView = glGetUniformLocation(program, "View");
+                uSampler0 = glGetUniformLocation(program, "Sampler0");
                 vao = glGenVertexArrays(); buffer = glGenBuffers(); framebuffer = glGenFramebuffers();
                 glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, buffer);
                 for (int column = 0; column < 4; column++) glVertexAttribPointer(column, 4, GL_FLOAT, false, 96, column * 16L);
@@ -89,9 +92,9 @@ public final class GenericShadowRenderer {
                     view.pushMatrix();
                     try {
                         RenderSystem.getProjectionType().applyLayeringTransform(view, 1);
-                        glUniformMatrix4fv(glGetUniformLocation(program, "View"), false, view.get(memory.mallocFloat(16)));
+                        glUniformMatrix4fv(uView, false, view.get(memory.mallocFloat(16)));
                     } finally { view.popMatrix(); }
-                    glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
+                    glUniform1i(uSampler0, 0);
                     gpu.bindTexture(0, Identifier.withDefaultNamespace("textures/misc/shadow.png"));
                     glEnable(GL_BLEND); glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
                     glDepthMask(false);

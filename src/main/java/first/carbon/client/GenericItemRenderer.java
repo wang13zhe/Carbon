@@ -28,6 +28,7 @@ public final class GenericItemRenderer {
     private final Map<Key, GpuItemBatch> meshes = new HashMap<>();
     private final Matrix4f identity = new Matrix4f();
     private int frame, program, framebuffer;
+    private int uView = -1, uCamera = -1, uSampler0 = -1, uSampler2 = -1, uColor = -1, uGlintPass = -1, uTextureMat = -1, uGlintAlpha = -1;
     private long meshBytes;
     private boolean active, failed;
     private int irisGeneration;
@@ -50,6 +51,14 @@ public final class GenericItemRenderer {
                 program = Carbon.RENDERER.createProgram("generic_instanced.vsh", "generic_instanced.fsh");
                 glUniformBlockBinding(program, glGetUniformBlockIndex(program, "Projection"), 4);
                 glUniformBlockBinding(program, glGetUniformBlockIndex(program, "Fog"), 5);
+                uView = glGetUniformLocation(program, "View");
+                uCamera = glGetUniformLocation(program, "Camera");
+                uSampler0 = glGetUniformLocation(program, "Sampler0");
+                uSampler2 = glGetUniformLocation(program, "Sampler2");
+                uColor = glGetUniformLocation(program, "ColorModulator");
+                uGlintPass = glGetUniformLocation(program, "GlintPass");
+                uTextureMat = glGetUniformLocation(program, "TextureMat");
+                uGlintAlpha = glGetUniformLocation(program, "GlintAlpha");
                 framebuffer = glGenFramebuffers();
             } catch (Exception exception) {
                 failed = true;
@@ -107,7 +116,7 @@ public final class GenericItemRenderer {
                     for (int pass = 0; pass < (batch.foil ? 2 : 1); pass++) for (var mesh : batch.meshes) {
                         var type = pass == 0 || mesh.glintType == null ? mesh.type : mesh.glintType;
                         if (pass == 0 || !Carbon.IRIS.shadowPass()) {
-                            Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
+                            Carbon.IRIS.draw(type, pass == 0 || mesh.preparedGlint == null ? mesh.prepared : mesh.preparedGlint, pass == 0 || mesh.compiledGlint == null ? mesh.compiled : mesh.compiledGlint, mesh.vertexSlice, mesh.vertices, mesh.vertexBuffer, mesh.indexBuffer, mesh.format, mesh.indices,
                                     batch.count, batch.instanceBuffer, 0, zero, 0, 0, batch.center, batch.halfSize);
                             drawCalls++; totalDraws++;
                         }
@@ -117,26 +126,26 @@ public final class GenericItemRenderer {
                 var scissor = RenderSystem.getScissorStateForRenderTypeDraws();
                 if (scissor.enabled()) { glEnable(GL_SCISSOR_TEST); glScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height()); }
                 glUseProgram(program);
-                glUniformMatrix4fv(glGetUniformLocation(program, "View"), false, RenderSystem.getModelViewMatrixCopy().get(memory.mallocFloat(16)));
-                glUniform3f(glGetUniformLocation(program, "Camera"), 0, 0, 0);
-                glUniform1i(glGetUniformLocation(program, "Sampler0"), 0);
-                glUniform1i(glGetUniformLocation(program, "Sampler2"), 2);
-                glUniform4f(glGetUniformLocation(program, "ColorModulator"), 1, 1, 1, 1);
+                glUniformMatrix4fv(uView, false, RenderSystem.getModelViewMatrixCopy().get(memory.mallocFloat(16)));
+                glUniform3f(uCamera, 0, 0, 0);
+                glUniform1i(uSampler0, 0);
+                glUniform1i(uSampler2, 2);
+                glUniform4f(uColor, 1, 1, 1, 1);
                 for (GpuItemBatch batch : meshes.values()) {
                     if (batch.count != 0) {
                         Carbon.SODIUM.mark(batch.sprites);
                         batch.upload();
                         for (int pass = 0; pass < (batch.foil ? 2 : 1); pass++) {
-                            glUniform1i(glGetUniformLocation(program, "GlintPass"), pass);
+                            glUniform1i(uGlintPass, pass);
                             if (pass != 0) {
                                 glEnable(GL_BLEND);
                                 glBlendFuncSeparate(GL_SRC_COLOR, GL_ONE, GL_ZERO, GL_ONE);
                                 glDepthFunc(GL_EQUAL);
                                 glDepthMask(false);
                             }
-                            glUniformMatrix4fv(glGetUniformLocation(program, "TextureMat"), false,
+                            glUniformMatrix4fv(uTextureMat, false,
                                     (pass == 0 ? identity : TextureTransform.GLINT_TEXTURING.createMatrix()).get(memory.mallocFloat(16)));
-                            glUniform1f(glGetUniformLocation(program, "GlintAlpha"), Minecraft.getInstance().options.glintStrength().get().floatValue());
+                            glUniform1f(uGlintAlpha, Minecraft.getInstance().options.glintStrength().get().floatValue());
                             for (var mesh : batch.meshes) {
                                 if (mesh.cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
                                 gpu.bindTexture(0, pass == 0 ? mesh.texture : ItemFeatureRenderer.ENCHANTED_GLINT_ITEM);

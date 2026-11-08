@@ -286,8 +286,11 @@ final class GpuItemBatch implements AutoCloseable {
         final net.minecraft.client.renderer.rendertype.RenderType glintType;
         final net.minecraft.client.renderer.rendertype.PreparedRenderType prepared;
         final net.minecraft.client.renderer.rendertype.PreparedRenderType preparedGlint;
+        final com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline compiled;
+        final com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline compiledGlint;
         final VertexFormat format;
         final GpuBuffer vertices;
+        final com.mojang.renderpearl.api.buffers.GpuBufferSlice vertexSlice;
         final int vao;
         final int vertexBuffer;
         final int indexBuffer;
@@ -301,9 +304,12 @@ final class GpuItemBatch implements AutoCloseable {
             this.glintType = glintType;
             this.prepared = type.prepare();
             this.preparedGlint = glintType == null ? null : glintType.prepare();
+            this.compiled = com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(prepared.pipeline());
+            this.compiledGlint = preparedGlint == null ? null : com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(preparedGlint.pipeline());
             this.format = format;
             vao = glGenVertexArrays();
             this.vertices = RenderSystem.getDevice().createBuffer(() -> "Carbon item mesh", GpuBuffer.USAGE_VERTEX, vertices);
+            this.vertexSlice = this.vertices.slice();
             vertexBuffer = ((ItemBatchRenderer.BufferAccess) this.vertices).imo$handle();
             indexBuffer = glGenBuffers();
             indices = vertexCount / 4 * 6;
