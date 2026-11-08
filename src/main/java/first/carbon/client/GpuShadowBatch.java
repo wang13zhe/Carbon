@@ -1,19 +1,14 @@
 package first.carbon.client;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import net.minecraft.client.renderer.LightTexture;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix4f;
-import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -25,23 +20,15 @@ final class GpuShadowBatch implements AutoCloseable {
     final Long2ObjectOpenHashMap<Receiver> receivers = new Long2ObjectOpenHashMap<>();
     private final Receiver empty = new Receiver(null, 0);
     private final BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
-    private final RenderType type = RenderType.entityShadow(ResourceLocation.withDefaultNamespace("textures/misc/shadow.png"));
+    final Identifier texture = Identifier.withDefaultNamespace("textures/misc/shadow.png");
     private final int program;
     private final int vao;
     private final int buffer;
-    private final int viewUniform;
-    private final int projectionUniform;
-    private final int cameraUniform;
-    private final int colorUniform;
-    private final int fogStartUniform;
-    private final int fogEndUniform;
-    private final int fogColorUniform;
-    private final int fogShapeUniform;
     private ByteBuffer data;
     private ByteBuffer previous;
     private ByteBuffer updateData;
     int updateCount;
-    private int updateCapacity;
+    int updateCapacity;
     private int capacity;
     private int gpuCapacity;
     private int uploadedCount;
@@ -52,14 +39,6 @@ final class GpuShadowBatch implements AutoCloseable {
 
     GpuShadowBatch(int program) {
         this.program = program;
-        viewUniform = glGetUniformLocation(program, "View");
-        projectionUniform = glGetUniformLocation(program, "Projection");
-        cameraUniform = glGetUniformLocation(program, "Camera");
-        colorUniform = glGetUniformLocation(program, "ColorModulator");
-        fogStartUniform = glGetUniformLocation(program, "FogStart");
-        fogEndUniform = glGetUniformLocation(program, "FogEnd");
-        fogColorUniform = glGetUniformLocation(program, "FogColor");
-        fogShapeUniform = glGetUniformLocation(program, "FogShape");
         int oldVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
         int oldBuffer = glGetInteger(GL_ARRAY_BUFFER_BINDING);
         vao = glGenVertexArrays();
@@ -77,7 +56,7 @@ final class GpuShadowBatch implements AutoCloseable {
         glBindBuffer(GL_ARRAY_BUFFER, oldBuffer);
     }
 
-    void add(ItemEntity entity, float partialTick, float strength, double originX, double originY, double originZ) {
+    void add(ItemEntity entity, float partialTick, Vec3 camera, double originX, double originY, double originZ) {
         if (!entity.isInvisible()) {
             double x = Mth.lerp(partialTick, entity.xOld, entity.getX());
             double y = Mth.lerp(partialTick, entity.yOld, entity.getY());
@@ -101,7 +80,7 @@ final class GpuShadowBatch implements AutoCloseable {
                                     position.setY(by);
                                     int brightness = level.getMaxLocalRawBrightness(position);
                                     if (brightness > 3) {
-                                        receiver = new Receiver(bounds, LightTexture.getBrightness(level.dimensionType(), brightness));
+                                        receiver = new Receiver(bounds, Lightmap.getBrightness(level.dimensionType(), brightness));
                                     }
                                 }
                             }
@@ -129,7 +108,7 @@ final class GpuShadowBatch implements AutoCloseable {
                             MemoryUtil.memPutFloat(address + 32, 0.15f);
                             MemoryUtil.memPutFloat(address + 36, (float) (y - by));
                             MemoryUtil.memPutFloat(address + 40, (float) (y - originY));
-                            MemoryUtil.memPutFloat(address + 44, strength);
+                            MemoryUtil.memPutInt(address + 44, 0);
                         }
                     }
                 }
@@ -150,7 +129,7 @@ final class GpuShadowBatch implements AutoCloseable {
         dirty = true;
     }
 
-    long draw(Matrix4f view, Matrix4f projection, Vec3 camera, double originX, double originY, double originZ) {
+    long draw(net.minecraft.client.renderer.state.level.CameraRenderState cameraState, GpuFrame frame) {
         long uploaded = 0;
         if (count > 0 && !flushed) {
             glBindBuffer(GL_ARRAY_BUFFER, buffer);
@@ -167,30 +146,16 @@ final class GpuShadowBatch implements AutoCloseable {
             }
             uploadedCount = count;
             dirty = false;
-            type.setupRenderState();
-            try (MemoryStack memory = MemoryStack.stackPush()) {
-                ShaderInstance vanilla = RenderSystem.getShader();
-                if (vanilla != null) {
-                    vanilla.setSampler("Sampler0", RenderSystem.getShaderTexture(0));
-                    vanilla.apply();
-                }
-                glUseProgram(program);
-                glUniformMatrix4fv(viewUniform, false, view.get(memory.mallocFloat(16)));
-                glUniformMatrix4fv(projectionUniform, false, projection.get(memory.mallocFloat(16)));
-                glUniform3f(cameraUniform, (float) (camera.x - originX), (float) (camera.y - originY), (float) (camera.z - originZ));
-                float[] color = RenderSystem.getShaderColor();
-                glUniform4f(colorUniform, color[0], color[1], color[2], color[3]);
-                float[] fog = RenderSystem.getShaderFogColor();
-                glUniform4f(fogColorUniform, fog[0], fog[1], fog[2], fog[3]);
-                glUniform1f(fogStartUniform, RenderSystem.getShaderFogStart());
-                glUniform1f(fogEndUniform, RenderSystem.getShaderFogEnd());
-                glUniform1i(fogShapeUniform, RenderSystem.getShaderFogShape().getIndex());
-                glBindVertexArray(vao);
-                glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
-                if (vanilla != null) vanilla.clear();
-            } finally {
-                type.clearRenderState();
-            }
+            ItemBatchRenderer.uniforms(program, cameraState);
+            frame.bindTexture(0, texture);
+            glBindVertexArray(vao);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(false);
+            glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
+            glDepthMask(true);
+            glDisable(GL_BLEND);
             flushed = true;
         }
         return uploaded;

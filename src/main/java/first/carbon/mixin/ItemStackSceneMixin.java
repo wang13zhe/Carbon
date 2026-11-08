@@ -15,6 +15,6 @@ public abstract class ItemStackSceneMixin {
     private void imo$changed(int count, CallbackInfo ci) {
         ItemStack stack = (ItemStack) (Object) this;
         if (stack.getCount() != count && stack.getComponents() instanceof ItemBatchRenderer.ComponentVersion components && components.imo$tracked()
-                && RenderSystem.isOnRenderThread()) Carbon.DROPPED_RENDERER.sceneDirty = true;
+                && RenderSystem.isOnRenderThread()) Carbon.RENDERER.sceneDirty = true;
     }
 }

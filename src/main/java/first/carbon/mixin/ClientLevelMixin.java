@@ -8,13 +8,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientLevel.class)
-public class ClientLevelMixin {
+public abstract class ClientLevelMixin {
     @Inject(method = {"addEntity", "removeEntity", "sendBlockUpdated", "onChunkLoaded", "unload"}, at = @At("HEAD"))
     private void imo$changed(CallbackInfo ci) {
-        Carbon.DROPPED_RENDERER.sceneDirty = true;
+        Carbon.RENDERER.sceneDirty = true;
     }
     @Inject(method = {"sendBlockUpdated", "onChunkLoaded", "unload"}, at = @At("HEAD"))
     private void imo$blockChanged(CallbackInfo ci) {
-        Carbon.DROPPED_RENDERER.blockCacheDirty = true;
+        Carbon.RENDERER.blockCacheDirty = true;
     }
 }

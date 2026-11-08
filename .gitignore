@@ -5,3 +5,16 @@ run/
 .idea/
 *.iml
 /release-video/
+
+# build scratch logs
+_blaze3d.txt
+_build_*.txt
+_compile_*.txt
+_research_*
+_c*.txt
+_c*_detail.txt
+_b*.txt
+_analyze*.sh
+_fix*.sh
+_stage_*.sh
+_sigs*.sh

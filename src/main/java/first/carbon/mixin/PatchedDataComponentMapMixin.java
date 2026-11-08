@@ -35,6 +35,6 @@ public abstract class PatchedDataComponentMapMixin implements ItemBatchRenderer.
     @Inject(method = "ensureMapOwnership", at = @At("HEAD"))
     private void imo$changed(CallbackInfo ci) {
         imo$version++;
-        if (imo$tracked && RenderSystem.isOnRenderThread()) Carbon.DROPPED_RENDERER.sceneDirty = true;
+        if (imo$tracked && RenderSystem.isOnRenderThread()) Carbon.RENDERER.sceneDirty = true;
     }
 }

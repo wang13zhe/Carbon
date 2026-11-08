@@ -1,18 +1,17 @@
 package first.carbon.compat;
 
+import net.minecraft.client.Minecraft;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.*;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import first.carbon.Carbon;
-import first.carbon.client.ItemBatchRenderer;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.ShaderInstance;
-import net.minecraft.world.item.ItemStack;
+import net.minecraft.client.renderer.rendertype.RenderSetup;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
-import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -21,36 +20,42 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.ToIntFunction;
 import java.util.regex.Pattern;
 
 import static org.lwjgl.opengl.GL43.*;
 
-// Iris 的格式、通道和着色器适配均集中在此，不注入 Iris 类。
+// 通过原生 RenderPass 保留 Iris 通道状态，仅替换物品的实例变换。
 public final class IrisCompatibility {
-    private boolean checked, present, active, blocked;
-    private MethodHandle packInUse, shadowPass, pipelineGetter, getEntity, setEntity, getItem, setItem, getBlock, setBlock;
-    private Object pipeline;
-    private Object settings;
-    private Object itemEntityId;
+    private boolean checked, ready, active, blocked;
+    private MethodHandle enabled, pipelineGetter, shadowPass, shadowView, getLevel, setLevel, overrideShaders, getEntity, setEntity, getItem, setItem, getBlock, setBlock, setSubmit;
+    private Object pipeline, settings, itemEntityId;
     private Method entityIds;
+    private final Map<Integer, List<Stage>> sources = new ConcurrentHashMap<>();
     private final Map<Long, Program> programs = new HashMap<>();
-    private final IdentityHashMap<MultiBufferSource.BufferSource, IdentityHashMap<RenderType, Layer>> layers = new IdentityHashMap<>();
-    public int generation;
-    public int draws;
+    private Draw current;
+    public int generation, draws, shadowDraws;
+    public long mainInstances, shadowInstances;
 
     public void beginFrame() {
-        draws = 0;
+        draws = shadowDraws = 0;
+        mainInstances = shadowInstances = 0;
         if (!checked) {
             checked = true;
             try {
                 var lookup = MethodHandles.publicLookup();
                 Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
                 Object instance = api.getMethod("getInstance").invoke(null);
-                packInUse = lookup.unreflect(api.getMethod("isShaderPackInUse")).bindTo(instance);
-                shadowPass = lookup.unreflect(Class.forName("net.irisshaders.iris.shadows.ShadowRenderingState").getMethod("areShadowsCurrentlyBeingRendered"));
+                enabled = lookup.unreflect(api.getMethod("isShaderPackInUse")).bindTo(instance);
                 Object manager = Class.forName("net.irisshaders.iris.Iris").getMethod("getPipelineManager").invoke(null);
                 pipelineGetter = lookup.unreflect(manager.getClass().getMethod("getPipelineNullable")).bindTo(manager);
+                shadowPass = lookup.unreflect(Class.forName("net.irisshaders.iris.shadows.ShadowRenderingState").getMethod("areShadowsCurrentlyBeingRendered"));
+                shadowView = lookup.unreflectGetter(Class.forName("net.irisshaders.iris.shadows.ShadowRenderer").getField("MODELVIEW"));
+                Class<?> immediate = Class.forName("net.irisshaders.iris.vertices.ImmediateState");
+                getLevel = lookup.unreflectGetter(immediate.getField("isRenderingLevel"));
+                setLevel = lookup.unreflectSetter(immediate.getField("isRenderingLevel"));
+                overrideShaders = lookup.unreflect(Class.forName("net.irisshaders.iris.pipeline.IrisRenderingPipeline").getMethod("shouldOverrideShaders"));
                 Class<?> captured = Class.forName("net.irisshaders.iris.uniforms.CapturedRenderingState");
                 Object state = captured.getField("INSTANCE").get(null);
                 getEntity = lookup.unreflect(captured.getMethod("getCurrentRenderedEntity")).bindTo(state);
@@ -59,39 +64,37 @@ public final class IrisCompatibility {
                 setItem = lookup.unreflect(captured.getMethod("setCurrentRenderedItem", int.class)).bindTo(state);
                 getBlock = lookup.unreflect(captured.getMethod("getCurrentRenderedBlockEntity")).bindTo(state);
                 setBlock = lookup.unreflect(captured.getMethod("setCurrentBlockEntity", int.class)).bindTo(state);
+                setSubmit = lookup.unreflect(Class.forName("net.irisshaders.iris.mixinterface.ModelStorage").getMethod("iris$set"));
                 Class<?> world = Class.forName("net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings");
                 settings = world.getField("INSTANCE").get(null);
                 entityIds = world.getMethod("getEntityIds");
                 itemEntityId = Class.forName("net.irisshaders.iris.shaderpack.materialmap.NamespacedId").getConstructor(String.class, String.class).newInstance("minecraft", "item");
-                present = true;
-            } catch (ClassNotFoundException ignored) {
-                present = false;
-            } catch (Throwable exception) {
+                ready = true;
+            } catch (ClassNotFoundException ignored) { }
+            catch (ReflectiveOperationException exception) {
                 blocked = true;
-                LoggerFactory.getLogger("Carbon").warn("Iris bridge initialization unavailable", exception);
+                org.slf4j.LoggerFactory.getLogger("Carbon").warn("Iris bridge initialization unavailable", exception);
             }
         }
-        if (present) {
+        if (enabled != null) {
             try {
-                boolean enabled = (boolean) packInUse.invokeExact();
-                Object current = pipelineGetter.invoke();
-                if (current != pipeline || active != enabled) {
+                boolean using = (boolean) enabled.invokeExact();
+                Object next = pipelineGetter == null ? null : pipelineGetter.invoke();
+                if (using != active || next != pipeline) {
                     invalidate();
-                    pipeline = current;
-                    active = enabled;
+                    active = using;
+                    pipeline = next;
                 }
-            } catch (Throwable exception) {
-                blocked = true;
-            }
+            } catch (Throwable exception) { active = blocked = true; }
         }
     }
 
-    public boolean active() {
-        return active;
-    }
+    public boolean active() { return active; }
 
     public boolean canInstance() {
-        return !active || !blocked && GL.getCapabilities().OpenGL43;
+        var capabilities = GL.getCapabilities();
+        return !active || ready && !blocked && (capabilities.OpenGL43 || capabilities.GL_ARB_shader_storage_buffer_object
+                && capabilities.GL_ARB_program_interface_query && capabilities.GL_ARB_shading_language_420pack);
     }
 
     public boolean shadowPass() {
@@ -103,183 +106,188 @@ public final class IrisCompatibility {
         return shadow;
     }
 
-    public boolean vanillaShadows() {
-        boolean allowed = true;
-        if (active && pipeline != null) {
-            try { allowed = !(boolean) pipeline.getClass().getMethod("shouldDisableVanillaEntityShadows").invoke(pipeline); }
-            catch (ReflectiveOperationException ignored) { allowed = false; }
+    public boolean canSubmit() {
+        boolean allowed = !active;
+        if (active && ready) {
+            try { allowed = (boolean) getLevel.invokeExact() && (boolean) overrideShaders.invoke(pipeline); }
+            catch (Throwable exception) { blocked = true; }
         }
         return allowed;
     }
 
+    public org.joml.Matrix4fc shadowView() {
+        try { return (org.joml.Matrix4fc) shadowView.invoke(); }
+        catch (Throwable exception) { throw new IllegalStateException(exception); }
+    }
+
+    public void captureProgram(int program) {
+        int[] shaders = new int[glGetProgrami(program, GL_ATTACHED_SHADERS)];
+        glGetAttachedShaders(program, new int[1], shaders);
+        List<Stage> stages = new ArrayList<>();
+        boolean item = false;
+        for (int shader : shaders) {
+            int type = glGetShaderi(shader, GL_SHADER_TYPE);
+            String text = glGetShaderSource(shader);
+            stages.add(new Stage(type, text));
+            item |= type == GL_VERTEX_SHADER && text.contains("iris_Position");
+        }
+        if (item) sources.put(program, stages);
+    }
+
+    public void releaseProgram(int source) {
+        sources.remove(source);
+        programs.entrySet().removeIf(entry -> {
+            boolean match = entry.getKey() >>> 3 == source;
+            if (match) entry.getValue().close();
+            return match;
+        });
+    }
+
     @SuppressWarnings("unchecked")
-    public int[] captureItem() {
+    public int[] capture(Object submit) {
         int[] previous = null;
-        if (active) {
+        if (active && !blocked) {
             try {
-                previous = new int[]{(int) getEntity.invokeExact(), (int) getItem.invokeExact(), (int) getBlock.invokeExact()};
-                Object ids = entityIds.invoke(settings);
-                int entity = ids == null ? 0 : ((ToIntFunction<Object>) ids).applyAsInt(itemEntityId);
-                setEntity.invokeExact(entity);
+                previous = new int[]{(int) getEntity.invokeExact(), (int) getItem.invokeExact(), (int) getBlock.invokeExact(), (boolean) getLevel.invokeExact() ? 1 : 0};
+                if (submit != null) setSubmit.invoke(submit);
+                else {
+                    setLevel.invokeExact(true);
+                    Object ids = entityIds.invoke(settings);
+                    setEntity.invokeExact(ids == null ? 0 : ((ToIntFunction<Object>) ids).applyAsInt(itemEntityId));
+                }
             } catch (Throwable exception) { blocked = true; }
         }
         return previous;
     }
 
-    public void restoreCapture(int[] previous) {
+    public void restore(int[] previous) {
         if (previous != null) {
             try {
                 setEntity.invokeExact(previous[0]);
                 setItem.invokeExact(previous[1]);
                 setBlock.invokeExact(previous[2]);
+                setLevel.invokeExact(previous[3] != 0);
             } catch (Throwable exception) { blocked = true; }
         }
     }
 
     public long identifiers() {
-        long value = 0;
+        long ids = 0;
         if (active) {
-            try {
-                value = ((int) getEntity.invokeExact() & 65535L) | (((int) getBlock.invokeExact() & 65535L) << 16)
-                        | (((int) getItem.invokeExact() & 65535L) << 32);
-            } catch (Throwable exception) { blocked = true; }
+            try { ids = ((int) getEntity.invokeExact() & 65535L) | (((int) getBlock.invokeExact() & 65535L) << 16) | (((int) getItem.invokeExact() & 65535L) << 32); }
+            catch (Throwable exception) { blocked = true; }
         }
-        return value;
+        return ids;
     }
 
-    public VertexConsumer getBuffer(MultiBufferSource source, RenderType type) {
-        MultiBufferSource original = source;
-        if (active && canInstance()) {
-            if (shadowPass() && (type == RenderType.glint() || type == RenderType.glintTranslucent()
-                    || type == RenderType.entityGlint() || type == RenderType.entityGlintDirect())) return source.getBuffer(type);
-            try {
-                while (original.getClass().getName().equals("net.irisshaders.iris.layer.BufferSourceWrapper")) {
-                    original = (MultiBufferSource) original.getClass().getMethod("getOriginal").invoke(original);
-                }
-            } catch (ReflectiveOperationException exception) { original = source; }
-            if (original instanceof MultiBufferSource.BufferSource owner && !owner.getClass().equals(MultiBufferSource.BufferSource.class)) {
-                Layer layer = layers.computeIfAbsent(owner, key -> new IdentityHashMap<>()).computeIfAbsent(type, key -> new Layer(owner, key));
-                VertexConsumer result = source.getBuffer(layer);
-                if (result instanceof ItemBatchRenderer.Target target) target.imo$target(owner, layer);
-                return result;
-            }
-        }
-        return source.getBuffer(type);
+    public void draw(RenderType type, GpuBuffer vertices, int vertexBuffer, int indexBuffer, VertexFormat format, int indices,
+                     int instances, int instanceBuffer, int mode, Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) {
+        var prepared = type.prepare();
+        var transforms = prepared.dynamicTransforms();
+        var autoIndices = RenderSystem.getSequentialBuffer(type.primitiveTopology());
+        var elements = autoIndices.getBuffer(indices);
+        current = new Draw(vertexBuffer, indexBuffer, format, indices, instances, instanceBuffer, mode, camera, clock, scale, center, halfSize);
+        try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Carbon Iris items", Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTextureView(), Optional.<org.joml.Vector4fc>empty(), Minecraft.getInstance().gameRenderer.mainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
+            pass.setPipeline(RenderSystem.getCompiledPipeline(prepared.pipeline()));
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("DynamicTransforms", transforms);
+            pass.setVertexBuffer(0, vertices.slice());
+            pass.setIndexBuffer(elements, autoIndices.type());
+            var scissor = prepared.scissorState();
+            if (scissor.enabled()) pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height());
+            for (var texture : prepared.textures()) pass.setUniform(texture.name(), texture.textureView(), texture.sampler());
+            pass.drawIndexed(0, 0, indices, 1, 0);
+        } finally { current = null; }
     }
 
-    public RenderType unwrap(RenderType type) {
-        return type instanceof Layer layer ? layer.wrapped : type;
-    }
-
-    public void marker(ItemBatchRenderer.Target target) {
-        if (target.imo$type() instanceof Layer && target instanceof VertexConsumer vertices) {
-            for (int vertex = 0; vertex < 4; vertex++) {
-                vertices.addVertex(0, 0, 0).setColor(255, 255, 255, 0).setUv(0, 0).setOverlay(655360).setLight(0).setNormal(0, 1, 0);
-            }
-        }
-    }
-
-    public ShaderInstance shader(ShaderInstance selected, RenderType type, boolean dropped) {
-        if (active && pipeline != null && (dropped || type instanceof Layer)) {
-            try {
-                RenderType original = unwrap(type);
-                String key;
-                if (shadowPass()) key = "SHADOW_ENTITIES_CUTOUT";
-                else if (original == RenderType.glint() || original == RenderType.glintTranslucent() || original == RenderType.entityGlint() || original == RenderType.entityGlintDirect()) key = "GLINT";
-                else if (original == RenderType.entitySolid(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)) key = "ENTITIES_SOLID_DIFFUSE";
-                else if (original == RenderType.entityTranslucentCull(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
-                        || original == RenderType.itemEntityTranslucentCull(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)) key = "ENTITIES_TRANSLUCENT";
-                else key = "ENTITIES_CUTOUT_DIFFUSE";
-                Object shaders = pipeline.getClass().getMethod("getShaderMap").invoke(pipeline);
-                Class<?> keys = Class.forName("net.irisshaders.iris.pipeline.programs.ShaderKey");
-                @SuppressWarnings({"unchecked", "rawtypes"})
-                Object shaderKey = Enum.valueOf((Class) keys, key);
-                Object shader = shaders.getClass().getMethod("getShader", keys).invoke(shaders, shaderKey);
-                if (shader instanceof ShaderInstance instance) return instance;
-            } catch (ReflectiveOperationException exception) {
-                blocked = true;
-            }
-        }
-        return selected;
-    }
-
-    public boolean usesShader(ShaderInstance shader) {
-        return active && shader != null && shader.getClass().getName().startsWith("net.irisshaders.iris.");
-    }
-
-    public void draw(ShaderInstance shader, int mode, int instanceBuffer, int vertexBuffer, int indexBuffer,
-                     VertexFormat format, int indices, int count, Vector3f camera, float clock, float scale,
-                     Vector3f center, Vector3f halfSize, boolean flat) {
-        if (!blocked) {
+    public boolean drawCurrent() {
+        Draw draw = current;
+        if (draw != null && !blocked) {
+            int source = glGetInteger(GL_CURRENT_PROGRAM), vao = glGetInteger(GL_VERTEX_ARRAY_BINDING), array = glGetInteger(GL_ARRAY_BUFFER_BINDING);
             try (MemoryStack memory = MemoryStack.stackPush()) {
-                long key = (long) shader.getId() << 3 | mode;
+                long key = (long) source << 3 | draw.mode;
                 Program program = programs.get(key);
                 if (program == null) {
-                    program = new Program(shader.getId(), mode);
+                    program = new Program(source, draw.mode);
                     programs.put(key, program);
                 }
-                int binding = program.binding;
-                int previous = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, binding);
-                long offset = previous == 0 ? 0 : glGetInteger64i(GL_SHADER_STORAGE_BUFFER_START, binding);
-                long length = previous == 0 ? 0 : glGetInteger64i(GL_SHADER_STORAGE_BUFFER_SIZE, binding);
-                int generic = glGetInteger(GL_SHADER_STORAGE_BUFFER_BINDING);
+                int previous = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, program.binding);
+                long start = glGetInteger64i(GL_SHADER_STORAGE_BUFFER_START, program.binding), size = glGetInteger64i(GL_SHADER_STORAGE_BUFFER_SIZE, program.binding);
+                int storage = glGetInteger(GL_SHADER_STORAGE_BUFFER_BINDING);
                 try {
                     glUseProgram(program.id);
                     FloatBuffer floats = memory.mallocFloat(16);
                     IntBuffer integers = memory.mallocInt(16);
-                    for (Uniform uniform : program.uniforms) uniform.copy(shader.getId(), floats, integers);
-                    glUniform3f(program.camera, camera.x, camera.y, camera.z);
-                    glUniform1f(program.clock, clock);
-                    glUniform1f(program.scale, scale);
-                    glUniform3f(program.center, center.x, center.y, center.z);
-                    glUniform3f(program.halfSize, halfSize.x, halfSize.y, halfSize.z);
-                    glUniform1i(program.flat, flat ? 1 : 0);
-                    int vao = program.vaos.get(vertexBuffer);
-                    if (vao == 0) {
-                        vao = glGenVertexArrays();
-                        program.vaos.put(vertexBuffer, vao);
-                        glBindVertexArray(vao);
-                        glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
-                        var names = format.getElementAttributeNames();
-                        var elements = format.getElements();
+                    for (Uniform uniform : program.uniforms) uniform.copy(source, floats, integers);
+                    glUniform3f(program.camera, draw.camera.x, draw.camera.y, draw.camera.z);
+                    glUniform1f(program.clock, draw.clock);
+                    glUniform1f(program.scale, draw.scale);
+                    glUniform3f(program.center, draw.center.x, draw.center.y, draw.center.z);
+                    glUniform3f(program.halfSize, draw.halfSize.x, draw.halfSize.y, draw.halfSize.z);
+                    glUniform1i(program.flat, 1);
+                    int vertexArray = program.vaos.get(draw.vertexBuffer);
+                    if (vertexArray == 0) {
+                        vertexArray = glGenVertexArrays();
+                        program.vaos.put(draw.vertexBuffer, vertexArray);
+                        glBindVertexArray(vertexArray);
+                        glBindBuffer(GL_ARRAY_BUFFER, draw.vertexBuffer);
+                        var elements = draw.format.getElements();
                         for (int i = 0; i < elements.size(); i++) {
                             var element = elements.get(i);
-                            String name = names.get(i);
+                            String name = element.name();
                             if (name.equals("Position") || name.equals("Color") || name.equals("Normal") || name.startsWith("UV")) name = "iris_" + name;
                             int attribute = glGetAttribLocation(program.id, name);
                             if (attribute >= 0) {
-                                int glType = switch (element.type().name()) {
-                                    case "FLOAT" -> GL_FLOAT;
-                                    case "BYTE" -> GL_BYTE;
-                                    case "UBYTE" -> GL_UNSIGNED_BYTE;
-                                    case "SHORT" -> GL_SHORT;
-                                    case "USHORT" -> GL_UNSIGNED_SHORT;
-                                    case "INT" -> GL_INT;
-                                    default -> GL_UNSIGNED_INT;
+                                var componentType = element.format().componentType();
+                                int glType = switch (componentType) {
+                                    case UNORM_8, UINT_8, OPAQUE_8 -> GL_UNSIGNED_BYTE;
+                                    case SNORM_8, SINT_8 -> GL_BYTE;
+                                    case UNORM_16, UINT_16, OPAQUE_16 -> GL_UNSIGNED_SHORT;
+                                    case SNORM_16, SINT_16 -> GL_SHORT;
+                                    case FLOAT_16, FLOAT_32, OPAQUE_32, OPAQUE_64 -> GL_FLOAT;
+                                    case UINT_32 -> GL_UNSIGNED_INT;
+                                    case SINT_32 -> GL_INT;
                                 };
-                                boolean integer = name.equals("iris_UV1") || name.equals("iris_UV2") || name.equals("iris_Entity");
-                                if (integer) glVertexAttribIPointer(attribute, element.count(), glType, format.getVertexSize(), format.getOffset(element));
-                                else glVertexAttribPointer(attribute, element.count(), glType, glType == GL_BYTE || glType == GL_UNSIGNED_BYTE, format.getVertexSize(), format.getOffset(element));
+                                boolean normalized = componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.UNORM_8
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.SNORM_8
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.UNORM_16
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.SNORM_16;
+                                boolean integer = componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.UINT_8
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.SINT_8
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.UINT_16
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.SINT_16
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.UINT_32
+                                        || componentType == com.mojang.renderpearl.api.GpuFormat.ComponentType.SINT_32;
+                                if (integer) glVertexAttribIPointer(attribute, element.format().componentCount(), glType, draw.format.getVertexSize(), element.offset());
+                                else glVertexAttribPointer(attribute, element.format().componentCount(), glType, normalized, draw.format.getVertexSize(), element.offset());
                                 glEnableVertexAttribArray(attribute);
                             }
                         }
-                        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
-                    } else glBindVertexArray(vao);
-                    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, instanceBuffer);
-                    glDrawElementsInstanced(GL_TRIANGLES, indices, GL_UNSIGNED_INT, 0, count);
+                        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.indexBuffer);
+                    } else glBindVertexArray(vertexArray);
+                    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, program.binding, draw.instanceBuffer);
+                    glDrawElementsInstanced(GL_TRIANGLES, draw.indices, GL_UNSIGNED_INT, 0, draw.instances);
                     draws++;
+                    if (shadowPass()) {
+                        shadowDraws++;
+                        shadowInstances += draw.instances;
+                    } else mainInstances += draw.instances;
                 } finally {
-                    if (previous != 0 && length > 0) glBindBufferRange(GL_SHADER_STORAGE_BUFFER, binding, previous, offset, length);
-                    else glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, previous);
-                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, generic);
-                    glUseProgram(shader.getId());
+                    if (previous != 0 && size > 0) glBindBufferRange(GL_SHADER_STORAGE_BUFFER, program.binding, previous, start, size);
+                    else glBindBufferBase(GL_SHADER_STORAGE_BUFFER, program.binding, previous);
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, storage);
                 }
             } catch (Throwable exception) {
                 blocked = true;
                 generation++;
-                LoggerFactory.getLogger("Carbon").error("Iris instancing unavailable for this pipeline; restoring native submissions", exception);
+                org.slf4j.LoggerFactory.getLogger("Carbon").error("Iris instancing unavailable; restoring native submissions", exception);
+            } finally {
+                glUseProgram(source);
+                glBindVertexArray(vao);
+                glBindBuffer(GL_ARRAY_BUFFER, array);
             }
         }
+        return draw != null;
     }
 
     public void releaseMesh(int buffer) {
@@ -292,33 +300,15 @@ public final class IrisCompatibility {
     public void invalidate() {
         for (Program program : programs.values()) program.close();
         programs.clear();
-        layers.clear();
         blocked = false;
         generation++;
     }
 
-    private static final class Layer extends RenderType {
-        private final MultiBufferSource.BufferSource owner;
-        private final RenderType wrapped;
-
-        private Layer(MultiBufferSource.BufferSource owner, RenderType wrapped) {
-            super("carbon:instanced_" + wrapped, wrapped.format(), wrapped.mode(), wrapped.bufferSize(), wrapped.affectsCrumbling(), false,
-                    wrapped::setupRenderState, wrapped::clearRenderState);
-            this.owner = owner;
-            this.wrapped = wrapped;
-            try {
-                Class<?> state = Class.forName("net.irisshaders.batchedentityrendering.impl.BlendingStateHolder");
-                state.getMethod("setTransparencyType", Class.forName("net.irisshaders.batchedentityrendering.impl.TransparencyType"))
-                        .invoke(this, state.getMethod("getTransparencyType").invoke(wrapped));
-            } catch (ReflectiveOperationException exception) { throw new IllegalStateException(exception); }
-        }
-
-        @Override
-        public void draw(MeshData data) {
-            Carbon.RENDERER.flush(owner, this);
-            wrapped.draw(data);
-        }
-    }
+    public interface RenderTypeAccess { RenderSetup carbon$setup(); }
+    public interface RenderSetupAccess { net.minecraft.client.renderer.rendertype.TextureTransform carbon$textureTransform(); }
+    private record Stage(int type, String text) { }
+    private record Draw(int vertexBuffer, int indexBuffer, VertexFormat format, int indices, int instances, int instanceBuffer, int mode,
+                        Vector3f camera, float clock, float scale, Vector3f center, Vector3f halfSize) { }
 
     private static final class Program implements AutoCloseable {
         private final int id, binding, camera, clock, scale, center, halfSize, flat;
@@ -326,14 +316,13 @@ public final class IrisCompatibility {
         private final Int2IntOpenHashMap vaos = new Int2IntOpenHashMap();
 
         private Program(int source, int mode) throws Exception {
-            int[] attached = new int[glGetProgrami(source, GL_ATTACHED_SHADERS)];
-            glGetAttachedShaders(source, new int[1], attached);
+            List<Stage> stages = Carbon.IRIS.sources.get(source);
+            if (stages == null) throw new IllegalStateException("Missing Iris shader source");
             int vertex = 0;
             String text = null;
-            for (int shader : attached) {
-                int type = glGetShaderi(shader, GL_SHADER_TYPE);
-                if (type == GL_VERTEX_SHADER) text = glGetShaderSource(shader);
-                if (type == GL_TESS_CONTROL_SHADER || type == GL_TESS_EVALUATION_SHADER) throw new IllegalArgumentException("Tessellated item shader requires native submissions");
+            for (Stage stage : stages) {
+                if (stage.type == GL_VERTEX_SHADER) text = stage.text;
+                if (stage.type == GL_TESS_CONTROL_SHADER || stage.type == GL_TESS_EVALUATION_SHADER) throw new IllegalArgumentException("Tessellated item shader requires native submissions");
             }
             if (text == null) throw new IllegalStateException("Missing Iris vertex source");
             Set<Integer> used = new HashSet<>();
@@ -345,7 +334,8 @@ public final class IrisCompatibility {
             while (used.contains(selected)) selected--;
             if (selected < 0) throw new IllegalStateException("No free shader storage binding");
             binding = selected;
-            text = text.replaceFirst("#version[^\r\n]*", "#version 430 core");
+            var version = Pattern.compile("#version\\s+(\\d+)[^\\r\\n]*").matcher(text);
+            if (version.find() && Integer.parseInt(version.group(1)) < 330) text = version.replaceFirst("#version 330 core");
             for (String name : new String[]{"Position", "Normal", "Color", "UV0", "UV1", "UV2"}) {
                 if (Pattern.compile("\\bin\\s+\\w+\\s+" + name + "\\s*;").matcher(text).find()) {
                     text = text.replaceAll("\\b" + name + "\\b", "iris_" + name);
@@ -369,16 +359,29 @@ public final class IrisCompatibility {
                 if (stream == null) throw new IllegalStateException("Missing instance shader bridge");
                 kernel = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
             }
-            String header = "\n#define CARBON_MODE " + mode + "\n#define CARBON_UV1_TYPE " + types[2] + "\n#define CARBON_UV2_TYPE " + types[3]
+            String header = "\n#extension GL_ARB_shader_storage_buffer_object : require\n#extension GL_ARB_shading_language_420pack : require\n#define CARBON_MODE " + mode + "\n#define CARBON_UV1_TYPE " + types[2] + "\n#define CARBON_UV2_TYPE " + types[3]
                     + "\nlayout(std430, binding=" + binding + ") readonly buffer CarbonInstances { uint carbon_data[]; };\n" + declarations;
             int versionEnd = text.indexOf('\n');
+            var extensions = Pattern.compile("(?m)^\\s*#extension[^\\r\\n]*").matcher(text);
+            while (extensions.find()) versionEnd = extensions.end();
             text = text.substring(0, versionEnd + 1) + header + text.substring(versionEnd + 1) + "\n" + kernel;
             id = glCreateProgram();
             try (MemoryStack memory = MemoryStack.stackPush()) {
                 vertex = glCreateShader(GL_VERTEX_SHADER);glShaderSource(vertex, text);glCompileShader(vertex);
                 if (glGetShaderi(vertex, GL_COMPILE_STATUS) == GL_FALSE) throw new IllegalStateException(glGetShaderInfoLog(vertex));
                 glAttachShader(id, vertex);
-                for (int shader : attached) if (glGetShaderi(shader, GL_SHADER_TYPE) != GL_VERTEX_SHADER) glAttachShader(id, shader);
+                for (Stage stage : stages) if (stage.type != GL_VERTEX_SHADER) {
+                    int shader = glCreateShader(stage.type);
+                    glShaderSource(shader, stage.text);
+                    glCompileShader(shader);
+                    if (glGetShaderi(shader, GL_COMPILE_STATUS) == GL_FALSE) {
+                        String log = glGetShaderInfoLog(shader);
+                        glDeleteShader(shader);
+                        throw new IllegalStateException(log);
+                    }
+                    glAttachShader(id, shader);
+                    glDeleteShader(shader);
+                }
                 IntBuffer size = memory.mallocInt(1), type = memory.mallocInt(1);
                 for (int i = 0; i < glGetProgrami(source, GL_ACTIVE_ATTRIBUTES); i++) {
                     String name = glGetActiveAttrib(source, i, 256, size, type);

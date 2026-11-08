@@ -1,105 +1,83 @@
 package first.carbon;
 
 import com.mojang.brigadier.arguments.BoolArgumentType;
+import first.carbon.client.GenericItemRenderer;
+import first.carbon.client.GenericShadowRenderer;
 import first.carbon.client.ItemBatchRenderer;
-import first.carbon.client.DroppedItemBatchRenderer;
+import first.carbon.compat.IrisCompatibility;
+import first.carbon.compat.SodiumCompatibility;
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.chat.Component;
-import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.config.ModConfig;
-import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
-import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.gui.ConfigurationScreen;
-import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.common.ModConfigSpec;
-import net.neoforged.neoforge.event.GameShuttingDownEvent;
 
-import static net.minecraft.commands.Commands.argument;
-import static net.minecraft.commands.Commands.literal;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-@Mod(value = "carbon", dist = Dist.CLIENT)
-public final class Carbon {
-    public static final first.carbon.compat.IrisCompatibility IRIS = new first.carbon.compat.IrisCompatibility();
+public final class Carbon implements ClientModInitializer {
+    public static final IrisCompatibility IRIS = new IrisCompatibility();
+    public static final SodiumCompatibility SODIUM = new SodiumCompatibility();
+    public static final GenericItemRenderer GENERIC = new GenericItemRenderer();
+    public static final GenericShadowRenderer SHADOWS = new GenericShadowRenderer();
     public static final ItemBatchRenderer RENDERER = new ItemBatchRenderer();
-    public static final DroppedItemBatchRenderer DROPPED_RENDERER = new DroppedItemBatchRenderer();
     public static final Settings CONFIG = new Settings();
 
-    public Carbon(IEventBus modBus, ModContainer container) {
-        var oldConfig = net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get().resolve("item_model_optimization-client.toml");
-        var config = net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get().resolve("carbon-client.toml");
-        if (java.nio.file.Files.isRegularFile(oldConfig) && !java.nio.file.Files.exists(config)) {
-            try {
-                java.nio.file.Files.copy(oldConfig, config);
-            } catch (java.io.IOException exception) {
-                org.slf4j.LoggerFactory.getLogger("Carbon").warn("Unable to migrate the previous client configuration", exception);
-            }
+    @Override
+    public void onInitializeClient() {
+        Path configDir = FabricLoader.getInstance().getConfigDir();
+        Path oldConfig = configDir.resolve("item_model_optimization-client.toml");
+        Path config = configDir.resolve("carbon-client.toml");
+        if (Files.isRegularFile(oldConfig) && !Files.exists(config)) {
+            try { Files.copy(oldConfig, config); }
+            catch (IOException exception) { org.slf4j.LoggerFactory.getLogger("Carbon").warn("Unable to migrate configuration", exception); }
         }
-        container.registerConfig(ModConfig.Type.CLIENT, CONFIG.spec);
-        container.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
-        modBus.addListener((RegisterClientReloadListenersEvent event) -> event.registerReloadListener((ResourceManagerReloadListener) manager -> {
-            IRIS.invalidate();
-            RENDERER.invalidate();
-            DROPPED_RENDERER.invalidate();
-        }));
-        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
-            RENDERER.invalidate();
-            DROPPED_RENDERER.invalidate();
-        });
-        NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent event) -> {
-            RENDERER.invalidate();
-            DROPPED_RENDERER.invalidate();
-        });
-        NeoForge.EVENT_BUS.addListener((RenderFrameEvent.Pre event) -> {
+        CONFIG.load(config);
+
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
             IRIS.beginFrame();
-            RENDERER.beginFrame();
+            GENERIC.begin();
         });
-        NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent event) -> {
-            if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_ENTITIES) {
-                DROPPED_RENDERER.flush();
-                RENDERER.flushShadows();
-            }
-            if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_LEVEL) {
-                DROPPED_RENDERER.flush();
-                DROPPED_RENDERER.endFrame();
-                RENDERER.endWorld();
-            }
-        });
-        NeoForge.EVENT_BUS.addListener((RegisterClientCommandsEvent event) -> event.getDispatcher().register(
-                literal("carbon")
-                        .then(literal("enabled").then(argument("enabled", BoolArgumentType.bool()).executes(context -> {
-                            CONFIG.enabled.set(BoolArgumentType.getBool(context, "enabled"));
-                            CONFIG.spec.save();
-                            return 1;
-                        })))
-                        .then(literal("stats").executes(context -> {
-                            context.getSource().sendSuccess(() -> Component.literal(RENDERER.statistics() + "; dropped: " + DROPPED_RENDERER.statistics()), false);
-                            return 1;
-                        }))));
     }
 
     public static final class Settings {
-        public final ModConfigSpec spec;
-        public final ModConfigSpec.BooleanValue enabled;
-        public final ModConfigSpec.BooleanValue optimizeDroppedItems;
-        public final ModConfigSpec.BooleanValue physicalDroppedItems;
-        public final ModConfigSpec.BooleanValue skipVisibilityChecks;
-        public final ModConfigSpec.DoubleValue cacheUpdateBudgetMs;
+        public boolean enabled = true;
+        public boolean optimizeDroppedItems = true;
+        public boolean physicalDroppedItems = false;
+        public boolean skipVisibilityChecks = true;
+        public double cacheUpdateBudgetMs = 2.0;
 
-        private Settings() {
-            ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
-            enabled = builder.comment("Cache standard item model geometry and instance matching render submissions.").translation("carbon.configuration.enabled").define("enabled", true);
-            optimizeDroppedItems = builder.comment("Take over dropped-item models, spin and scale on the GPU. Disable to preserve other mods' dropped-item rendering and transforms.").translation("carbon.configuration.optimizeDroppedItems").define("optimizeDroppedItems", true);
-            physicalDroppedItems = builder.comment("Visual-only GPU tumbling and resting dropped items; requires optimizeDroppedItems. Does not change collisions, velocity or pickup.").translation("carbon.configuration.physicalDroppedItems").define("physicalDroppedItems", false);
-            skipVisibilityChecks = builder.comment("Skip frustum and Sodium occlusion checks for the dedicated dropped-item pipeline; distance limits still apply.").translation("carbon.configuration.skipVisibilityChecks").define("skipVisibilityChecks", true);
-            cacheUpdateBudgetMs = builder.comment("CPU cache update budget per frame in milliseconds. Keep drawing the previous scene until the queue completes. 0 updates immediately; a single item can exceed the budget.").translation("carbon.configuration.cacheUpdateBudgetMs").defineInRange("cacheUpdateBudgetMs", 2.0, 0.0, 20.0);
-            spec = builder.build();
+        public void load(Path path) {
+            if (!Files.exists(path)) return;
+            try {
+                for (String line : Files.readAllLines(path)) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    int eq = line.indexOf('=');
+                    if (eq < 0) continue;
+                    String key = line.substring(0, eq).trim();
+                    String value = line.substring(eq + 1).trim();
+                    switch (key) {
+                        case "enabled" -> enabled = Boolean.parseBoolean(value);
+                        case "optimizeDroppedItems" -> optimizeDroppedItems = Boolean.parseBoolean(value);
+                        case "physicalDroppedItems" -> physicalDroppedItems = Boolean.parseBoolean(value);
+                        case "skipVisibilityChecks" -> skipVisibilityChecks = Boolean.parseBoolean(value);
+                        case "cacheUpdateBudgetMs" -> cacheUpdateBudgetMs = Double.parseDouble(value);
+                    }
+                }
+            } catch (IOException ignored) {}
+        }
+
+        public void save(Path path) {
+            try {
+                Files.writeString(path, String.join("\n",
+                        "enabled = " + enabled,
+                        "optimizeDroppedItems = " + optimizeDroppedItems,
+                        "physicalDroppedItems = " + physicalDroppedItems,
+                        "skipVisibilityChecks = " + skipVisibilityChecks,
+                        "cacheUpdateBudgetMs = " + cacheUpdateBudgetMs
+                ));
+            } catch (IOException ignored) {}
         }
     }
 }

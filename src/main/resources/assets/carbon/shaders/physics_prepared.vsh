@@ -15,11 +15,11 @@ uniform int GlintPass;
 uniform vec3 Camera;
 uniform int FogShape;
 uniform int Flat;
-uniform vec3 Light0;
-uniform vec3 Light1;
+layout(std140) uniform Lighting { vec3 Light0; vec3 Light1; };
 uniform sampler2D Sampler1;
 uniform sampler2D Sampler2;
 out float vertexDistance;
+out float horizontalDistance;
 out vec4 vertexColor;
 out vec4 lightMapColor;
 out vec4 overlayColor;
@@ -43,9 +43,10 @@ void main() {
     }
     gl_Position = Projection * View * vec4(position, 1.0);
     vertexDistance = FogShape == 0 ? length(position) : max(length(position.xz), abs(position.y));
-    float light = min(1.0, (max(0.0, dot(Light0, normal)) + max(0.0, dot(Light1, normal))) * 0.6 + 0.4);
+    horizontalDistance = max(length(position.xz), abs(position.y));
+    float light = UV1.x == 0 ? 1.0 : min(1.0, (max(0.0, dot(Light0, normal)) + max(0.0, dot(Light1, normal))) * 0.6 + 0.4);
     vertexColor = vec4(Color.rgb * light, Color.a);
-    lightMapColor = texelFetch(Sampler2, clamp(max(UV2, ivec2(Light.x, Light.y & 32767)) / 16, ivec2(0), ivec2(15)), 0);
-    overlayColor = texelFetch(Sampler1, UV1, 0);
+    lightMapColor = UV1.y == 0 ? vec4(1.0) : texture(Sampler2, clamp(vec2(max(UV2, ivec2(Light.x, Light.y & 32767))) / 256.0 + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+    overlayColor = vec4(1.0);
     texCoord = GlintPass == 0 ? UV0 : (TextureMat * vec4(UV0, 0.0, 1.0)).xy;
 }

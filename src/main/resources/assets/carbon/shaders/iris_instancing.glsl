@@ -20,38 +20,19 @@ void main() {
     mat3 tangentRotation;
     uint light;
 #if CARBON_MODE == 0
-    carbon_base = uint(gl_InstanceID) * 32u;
+    carbon_base = uint(gl_InstanceID) * 36u;
     mat4 instance = mat4(vec4(carbon_vector(0u), carbon_float(3u)), vec4(carbon_vector(4u), carbon_float(7u)),
             vec4(carbon_vector(8u), carbon_float(11u)), vec4(carbon_vector(12u), carbon_float(15u)));
     position = (instance * vec4(iris_Position, 1.0)).xyz;
-    rotation = mat3(carbon_vector(16u), carbon_vector(19u), carbon_vector(22u));
+    rotation = mat3(carbon_vector(22u), carbon_vector(25u), carbon_vector(28u));
     tangentRotation = mat3(instance);
-    light = carbon_data[carbon_base + 25u];
-    uint overlay = carbon_data[carbon_base + 26u];
-    carbon_iris_UV1 = CARBON_UV1_TYPE(overlay & 65535u, overlay >> 16u);
-    carbon_iris_Entity = ivec3(carbon_data[carbon_base + 28u], carbon_data[carbon_base + 29u], carbon_data[carbon_base + 30u]);
-#else
-#if CARBON_MODE == 4
-    carbon_base = uint(gl_InstanceID) * 10u;
+    light = uint(carbon_float(20u)) | (uint(carbon_float(21u)) << 16u);
+    carbon_iris_UV1 = iris_UV1;
+    carbon_iris_Entity = iris_Entity;
 #else
     carbon_base = uint(gl_InstanceID) * 10u;
-#endif
     light = carbon_data[carbon_base + 3u];
-#if CARBON_MODE == 1
-    float s = carbon_float(4u), c = carbon_float(5u);
-    rotation = mat3(c,0,-s,0,1,0,s,0,c);
-    position = rotation * iris_Position + carbon_vector(0u) - carbonCamera;
-#elif CARBON_MODE == 2
-    if ((light & 0x80000000u) == 0u) {
-        float s = carbon_float(4u), c = carbon_float(5u);
-        mat3 resting = carbonFlat != 0 ? mat3(1,0,0,0,0,1,0,-1,0) : mat3(1.0);
-        rotation = mat3(c,0,-s,0,1,0,s,0,c) * resting;
-    } else {
-        rotation = carbon_matrix(vec4(carbon_vector(4u), carbon_float(7u)));
-    }
-    position = rotation * iris_Position + carbon_vector(0u) - carbonCamera;
-    light &= 0x7fffffffu;
-#elif CARBON_MODE == 3
+#if CARBON_MODE == 3
     float age = carbonClock + carbon_float(4u);
     float phase = carbon_float(5u);
     float angle = age / 20.0 + phase;

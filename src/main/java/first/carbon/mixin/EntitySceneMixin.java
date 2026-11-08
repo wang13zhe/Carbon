@@ -2,7 +2,7 @@ package first.carbon.mixin;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import first.carbon.Carbon;
-import first.carbon.client.DroppedItemBatchRenderer;
+import first.carbon.client.ItemBatchRenderer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -16,23 +16,23 @@ public abstract class EntitySceneMixin {
     private void imo$position(double x, double y, double z, CallbackInfo ci) {
         if ((Object) this instanceof ItemEntity item && RenderSystem.isOnRenderThread()
                 && (item.getX() != x || item.getY() != y || item.getZ() != z)) {
-            Carbon.DROPPED_RENDERER.sceneDirty = true;
+            Carbon.RENDERER.sceneDirty = true;
         }
     }
 
     @Inject(method = "setYRot", at = @At("HEAD"))
     private void imo$rotation(float yRot, CallbackInfo ci) {
         if ((Object) this instanceof ItemEntity item && RenderSystem.isOnRenderThread()
-                && Carbon.CONFIG.physicalDroppedItems.get() && item.getYRot() != yRot) {
-            Carbon.DROPPED_RENDERER.sceneDirty = true;
+                && Carbon.CONFIG.physicalDroppedItems && item.getYRot() != yRot) {
+            Carbon.RENDERER.sceneDirty = true;
         }
     }
 
     @Inject(method = "onSyncedDataUpdated(Lnet/minecraft/network/syncher/EntityDataAccessor;)V", at = @At("HEAD"))
     private void imo$changed(CallbackInfo ci) {
         if ((Object) this instanceof ItemEntity && RenderSystem.isOnRenderThread()) {
-            ((DroppedItemBatchRenderer.EntityCacheAccess) this).imo$invalidate();
-            Carbon.DROPPED_RENDERER.sceneDirty = true;
+            ((ItemBatchRenderer.EntityCacheAccess) this).imo$invalidate();
+            Carbon.RENDERER.sceneDirty = true;
         }
     }
 
@@ -40,8 +40,8 @@ public abstract class EntitySceneMixin {
     private void imo$fire(int fireTicks, CallbackInfo ci) {
         if ((Object) this instanceof ItemEntity item && RenderSystem.isOnRenderThread()
                 && (item.getRemainingFireTicks() > 0) != (fireTicks > 0)) {
-            ((DroppedItemBatchRenderer.EntityCacheAccess) this).imo$invalidate();
-            Carbon.DROPPED_RENDERER.sceneDirty = true;
+            ((ItemBatchRenderer.EntityCacheAccess) this).imo$invalidate();
+            Carbon.RENDERER.sceneDirty = true;
         }
     }
 }

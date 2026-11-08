@@ -2,7 +2,7 @@ package first.carbon.mixin;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import first.carbon.Carbon;
-import first.carbon.client.DroppedItemBatchRenderer;
+import first.carbon.client.ItemBatchRenderer;
 import first.carbon.client.ItemBatchRenderer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -16,9 +16,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ItemEntity.class)
-public abstract class ItemEntityCacheMixin extends Entity implements DroppedItemBatchRenderer.EntityCacheAccess {
+public abstract class ItemEntityCacheMixin extends Entity implements ItemBatchRenderer.EntityCacheAccess {
     @Unique
-    private final DroppedItemBatchRenderer.EntityCache imo$cache = new DroppedItemBatchRenderer.EntityCache();
+    private final ItemBatchRenderer.EntityCache imo$cache = new ItemBatchRenderer.EntityCache();
     @Unique
     private ItemStack imo$renderStack;
     @Unique
@@ -35,7 +35,7 @@ public abstract class ItemEntityCacheMixin extends Entity implements DroppedItem
     }
 
     @Override
-    public DroppedItemBatchRenderer.EntityCache imo$cache() {
+    public ItemBatchRenderer.EntityCache imo$cache() {
         return imo$cache;
     }
 
@@ -48,7 +48,7 @@ public abstract class ItemEntityCacheMixin extends Entity implements DroppedItem
             imo$renderVersion = version;
             imo$renderTick = tickCount;
             boolean fire = getRemainingFireTicks() > 0 || getSharedFlag(0);
-            imo$eligible = !hasCustomName() && !shouldShowName() && !(fire && displayFireAnimation()) && !isCurrentlyGlowing();
+            imo$eligible = !isInvisible() && !hasCustomName() && !shouldShowName() && !(fire && displayFireAnimation()) && !isCurrentlyGlowing();
             imo$renderFire = fire && isOnFire();
         }
         return imo$eligible;
@@ -69,7 +69,7 @@ public abstract class ItemEntityCacheMixin extends Entity implements DroppedItem
     private void imo$age(CallbackInfo ci) {
         if (RenderSystem.isOnRenderThread()) {
             imo$invalidate();
-            Carbon.DROPPED_RENDERER.sceneDirty = true;
+            Carbon.RENDERER.sceneDirty = true;
         }
     }
 }

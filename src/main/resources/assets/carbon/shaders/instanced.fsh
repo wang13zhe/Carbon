@@ -6,31 +6,36 @@ uniform float GlintAlpha;
 uniform vec4 ColorModulator;
 uniform float FogStart;
 uniform float FogEnd;
+uniform float RenderFogStart;
+uniform float RenderFogEnd;
 uniform vec4 FogColor;
 
 in float vertexDistance;
+in float horizontalDistance;
 in vec4 vertexColor;
 in vec4 lightMapColor;
 in vec4 overlayColor;
 in vec2 texCoord;
 out vec4 fragColor;
 
+float fogValue(float distance, float start, float end) {
+    return distance <= start ? 0.0 : distance >= end ? 1.0 : (distance - start) / (end - start);
+}
+
 void main() {
     vec4 color = texture(Sampler0, texCoord);
-    if (color.a < 0.1) discard;
-    if (GlintPass != 0) {
-        color *= ColorModulator;
-        float fade = FogStart == FogEnd ? float(vertexDistance <= FogStart)
-                : 1.0 - smoothstep(FogStart, FogEnd, vertexDistance);
-        fragColor = vec4(color.rgb * fade * GlintAlpha, color.a);
-    } else {
-        color *= vertexColor * ColorModulator;
-        color.rgb = mix(overlayColor.rgb, color.rgb, overlayColor.a);
-        color *= lightMapColor;
-        if (vertexDistance > FogStart) {
-            float fog = vertexDistance < FogEnd ? smoothstep(FogStart, FogEnd, vertexDistance) : 1.0;
-            color.rgb = mix(color.rgb, FogColor.rgb, fog * FogColor.a);
-        }
-        fragColor = color;
+    if (color.a < 0.1) {
+        discard;
     }
+    if (GlintPass != 0) {
+        float fade = 1.0 - max(fogValue(vertexDistance, FogStart, FogEnd), fogValue(horizontalDistance, RenderFogStart, RenderFogEnd));
+        fragColor = vec4(color.rgb * fade * GlintAlpha, color.a);
+        return;
+    }
+    color *= vertexColor * ColorModulator;
+    color.rgb = mix(overlayColor.rgb, color.rgb, overlayColor.a);
+    color *= lightMapColor;
+    float fog = max(fogValue(vertexDistance, FogStart, FogEnd), fogValue(horizontalDistance, RenderFogStart, RenderFogEnd));
+    color.rgb = mix(color.rgb, FogColor.rgb, fog * FogColor.a);
+    fragColor = color;
 }
