@@ -18,3 +18,5 @@ _analyze*.sh
 _fix*.sh
 _stage_*.sh
 _sigs*.sh
+_patch/
+_api_*.log
