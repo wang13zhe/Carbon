@@ -6,7 +6,8 @@ run/
 *.iml
 /release-video/
 
-# build scratch logs
+# Local working files stay out of the repository (project convention: only source
+# and committed notes ship; scripts, scratch logs, backups and downloads remain local).
 _blaze3d.txt
 _build_*.txt
 _compile_*.txt
@@ -20,10 +21,26 @@ _stage_*.sh
 _sigs*.sh
 _patch/
 _api_*.log
-_push2.sh
-_push*.sh
-_p.sh
-_opt.txt
-_ch*.out
-_gen*.out
-_p*.sh
+_*.py
+_*.sh
+_*.mjs
+_*.ps1
+_*.out
+_*.txt
+_*.log
+_*.bak
+_*.jar
+_extracted/
+_mods_dl/
+_mods_new/
+_printer_dl/
+_classpath.txt
+_fabric_cp.txt
+_tree.json
+_commit.json
+
+# helper backups / downloaded artifacts kept local only
+\#*.out
+_*.java
+_*.json
+litematica-printer-*.jar
