@@ -61,3 +61,55 @@ C2ME + Lithium 已在分担；稳态不再出现。
 
 - 未动 `pauseOnLostFocus`（正式包保持 `true`）：单人暂停省资源，是合理默认。
 - 未改任何模组的 mixin 或源码；本轮只调配置。
+
+---
+
+## 更正（重要）：本文档 §"run2 实测结果" 的适用性受限
+
+上述采样跑在**复制自"测试"存档**的世界里。事后核对该存档的生成器设置发现：
+
+```
+saves/测试/data/minecraft/world_gen_settings.dat
+  minecraft:overworld → generator.type = minecraft:flat     ← 超平坦
+  minecraft:the_nether → generator.type = minecraft:noise
+```
+
+**超平坦世界几乎不生成地形，区块生成成本极低。** 因此：
+
+- "服务端 tick 平均 6ms、稳态健康" **只在超平坦场景成立**，不能外推到正常世界。
+  正常地形有噪声地形、矿洞、结构、更多方块状态，加载与生成负担明显更高。
+- GC 干净（2 次 / 49ms）这一条**仍然有效**——GC 与地形生成无关。
+- 电源方案是"卡"的主因这一条**仍然有效**（它与场景无关）。
+- EntityCulling 在暂停采样下被高估、修正后仅 ~1% 这一条**仍然有效**。
+
+### 为补测做的尝试（未完成）
+
+按 26.x 的存储位置改写世界生成器（`world_gen_settings.dat` 是 NBT，外层包一层
+`{DataVersion, data}`），把 overworld 从 `minecraft:flat` 换成 `minecraft:noise`，
+并删掉旧超平坦区块触发生成。NBT 读写经往返校验（读回确认 = `minecraft:noise`）。
+
+但改造后的世界**两次都未加载成功**（停在资源重载末尾、`Starting integrated: 0`），
+而不改动的原世界能正常进世界（`Starting integrated: 1`、13427 行日志）。
+失败原因未隔离干净：既有"我改的世界有问题"的可能，也受**内存压力**干扰——
+当时机器在**游戏未运行**时就已占用 76% 内存、仅剩 ~2.8GB
+（DSH Web 界面 node+msedgewebview2 ≈ 1.4GB、Firefox×4 ≈ 1.2GB、QQ×2 ≈ 0.4GB、PixPin），
+再叠加 2.5~3GB 堆的游戏进程会被挤死（无崩溃报告、无 hs_err、无系统事件日志）。
+
+**结论：正常地形下的性能数据仍然缺失，不要引用本文档的 6ms 数字作为常态结论。**
+
+### 已取得的、仍然有效的实测
+
+在能跑通的世界里，10000 个物品落地时：
+
+```
+[00:16:47] GPU item instancing ready: Intel(R) Graphics                       ← Carbon 在核显上生效
+[00:16:52] Can't keep up! Running 10366ms or 207 ticks behind                  ← 物品洪峰的 tick 积压
+[00:17:20] Can't keep up! Running 12291ms or 245 ticks behind
+```
+
+无崩溃报告、无 JVM 崩溃日志 → **10000 物品压测没有导致崩溃**。
+
+### 给后续测试者的硬性前置
+
+1. 先确认世界的生成器类型，超平坦不能用来做地形/区块相关结论。
+2. 采样前让机器空出至少 4~5GB 内存，否则进程会被挤死且不留任何崩溃痕迹。
