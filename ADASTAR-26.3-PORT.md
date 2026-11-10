@@ -173,7 +173,7 @@ Modrinth 检索 `litematica printer`，`Litematica Printer`(3llatzyE) 311 万下
 
 - `settings\game.json` 堆上限 8192 → 4096：防与系统/Firefox 争抢触发换页（备份 `_game.json.bak`）。
   此项为 OOM/换页安全，不是 `Can't keep up` 的解法。
-- `options.txt` 六项下调，`entityDistanceScaling 5.0 → 1.0` 收益最大（备份 `_options.bak`）。
+- `options.txt` 下调七项：`entityDistanceScaling 5.0 → 0.5`（滑块下限，收益最大；注意 1.0 才是默认值）、`renderDistance 16→10`、`simulationDistance 12→8`、`particles 2→1`、`entityShadows 关`、`biomeBlendRadius 2→0`、`maxFps 90→120`（备份 `_options.bak` / `_options.before-gpu-tune.bak`）。
 - `sodium-options.json` `chunk_builder_threads → 2`（4 核留主线程核）。
 - `carbon-client.toml` `cacheUpdateBudgetMs → 1.0`。
 
