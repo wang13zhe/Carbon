@@ -113,3 +113,63 @@ saves/测试/data/minecraft/world_gen_settings.dat
 
 1. 先确认世界的生成器类型，超平坦不能用来做地形/区块相关结论。
 2. 采样前让机器空出至少 4~5GB 内存，否则进程会被挤死且不留任何崩溃痕迹。
+
+---
+
+## 真地形补充实测（有效数据，采用无头服务端）
+
+超平坦那次采样作废后，改用**无头 Fabric 服务端 + RCON + spark** 拿真地形数据。
+这条管线本身可复用，且不需要 GPU、内存占用小：
+
+1. 26.3 的客户端 jar 内含服务端（`net.minecraft.server.Main`），fabric-loader 有
+   `net.fabricmc.loader.impl.launch.knot.KnotServer` → 可用同一套 classpath 起服务端。
+2. `server.properties` 里 `level-type=minecraft:normal`、`enable-rcon=true`。
+3. **空服 60 秒会自动暂停**（`Server empty for 60 seconds, pausing`），此时 spark 拿不到
+   统计并报 `Timed out waiting for world statistics` / `A command execution ... might be stuck`。
+   必须用 carpet 的 `/player <name> spawn` 放一个假玩家保持 tick。
+4. **spark 的输出走 "System chat"，只进日志、不进 RCON 回包** —— RCON 只能发命令，
+   结果要回到 `logs/latest.log` 里读。`--save-to-file` 会把 profile 存到
+   `config/spark/*.sparkprofile`（protobuf 格式，不是 gzip JSON）。
+
+### 结果（60 秒采样，198 个类 / 1,642,730 样本）
+
+按类聚合（同类的样本跨多个改写它的模组求和）：
+
+| 类 | 样本 | 占比 |
+|---|---|---|
+| `net.minecraft.world.entity.Entity` | 337,405 | 20.5% |
+| `net.minecraft.world.entity.LivingEntity` | 288,134 | 17.5% |
+| `net.minecraft.server.level.ServerLevel` | 265,957 | 16.2% |
+| `net.minecraft.world.level.Level` | 229,686 | 14.0% |
+| `net.minecraft.server.level.ServerChunkCache` | 105,323 | 6.4% |
+| `net.minecraft.server.MinecraftServer` | 104,501 | 6.4% |
+| `net.minecraft.server.level.ChunkMap` | 91,361 | 5.6% |
+| `FlowingFluid` | 24,872 | 1.5% |
+| `NaturalSpawner` | 21,424 | 1.3% |
+
+**解读**：真地形下开销以**实体 ticking（Entity+LivingEntity+Mob+Brain ≈ 40%）**与
+**等级 ticking（ServerLevel+Level ≈ 30%）**为主，区块系统（ServerChunkCache+ChunkMap+
+LevelChunk）约 13%。与超平坦的关键差别是**方块/流体/刷怪/实体 AI 全部复活**。
+
+同期服务端日志：
+
+```
+Can't keep up! Is the server overloaded? Running 4915ms or 98 ticks behind
+Can't keep up! Is the server overloaded? Running 2714ms or 54 ticks behind
+```
+
+即**真地形下新建世界的加载期确实会压垮服务端**（这正是超平坦掩盖掉的部分）。
+
+自制模组占用：`dimparallel` 1.11%、`chunkheat` 1.10%、`carbon` 0%（客户端模组，服务端
+绕不过去；其效果需在客户端侧验证，见前文 `GPU item instancing ready: Intel(R) Graphics`）。
+
+### 注意 spark 归因的语义
+
+spark 把每个栈帧归给**改写该类的模组**，所以"lithium 35%"指的是**lithium 所优化的那段
+原版代码**占比，不是 lithium 自身的开销。同理 `dimparallel` 1.11% 主要是
+`MinecraftServer.tickChildren` 这段原版代码。
+
+### 仍未验证
+
+客户端在真地形下的渲染帧率。上面的数据是**服务端**视角；客户端的 ItemEntity 渲染
+（Carbon 的主场）只在合成世界里量到过，真地形下的客户端帧时间仍缺数据。
